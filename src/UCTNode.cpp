@@ -51,7 +51,8 @@ SMP::Mutex& UCTNode::get_mutex() {
     return m_nodemutex;
 }
 
-bool UCTNode::create_children(std::atomic<int>& nodecount,
+bool UCTNode::create_children(Network & network,
+                              std::atomic<int>& nodecount,
                               GameState& state,
                               float& eval,
                               float min_psa_ratio) {
@@ -77,7 +78,7 @@ bool UCTNode::create_children(std::atomic<int>& nodecount,
     m_is_expanding = true;
     lock.unlock();
 
-    const auto raw_netlist = Network::get_scored_moves(
+    const auto raw_netlist = network.get_scored_moves(
         &state, Network::Ensemble::RANDOM_SYMMETRY);
 
     // DCNN returns winrate as side to move
@@ -204,6 +205,18 @@ int UCTNode::get_visits() const {
     return m_visits;
 }
 
+// Return the true score, without taking into account virtual losses.
+float UCTNode::get_pure_eval(int tomove) const {
+    auto visits = get_visits();
+    assert(visits > 0);
+    auto blackeval = get_blackevals();
+    auto score = static_cast<float>(blackeval / double(visits));
+    if (tomove == FastBoard::WHITE) {
+        score = 1.0f - score;
+    }
+    return score;
+}
+
 float UCTNode::get_eval(int tomove) const {
     // Due to the use of atomic updates and virtual losses, it is
     // possible for the visit count to change underneath us. Make sure
@@ -274,7 +287,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         auto winrate = fpu_eval;
         if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
-        }
+        } else if (child.get_score() < 0.009) continue;
         auto psa = child.get_score();
         auto denom = 1.0 + child.get_visits();
         auto puct = cfg_puct * psa * (numerator / denom);
